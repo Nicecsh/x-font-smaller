@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X.com 字体改小
 // @namespace    sunny-x-font-smaller
-// @version      1.2
+// @version      1.3
 // @description  把 X（x.com）网页版整体缩小显示；左侧抽屉菜单项的字号和间距各缩小一半
 // @author       csh
 // @date         2026-11-17
@@ -21,11 +21,16 @@
   GM_addStyle('html { zoom: ' + SCALE + ' !important; }');
 
   // 左侧抽屉菜单：菜单项字号减半、上下间距减半
-  // X 的 class 名每次构建都会变，没法用 class 定位，改按菜单文字匹配；
-  // 字号和间距取当前实际渲染值乘以比例，不管 X 用多大字号都正好减半。
+  // v1.3 改法：不再猜菜单项是什么标签，直接在页面里按文字找菜单名
+  // （个人资料、Premium、列表……），找到就把字号用 !important 写死，
+  // 不管 X 的样式怎么写都压得住。
   // 改这两个数字调比例：0.5 就是减半，改成 0.6 就是缩小到原来的 60%
   const FONT_RATIO = 0.5;
   const SPACE_RATIO = 0.5;
+
+  // 调试提示：每次打开左侧菜单成功缩小后，屏幕下方短暂显示“已缩小 N 个菜单项”。
+  // 如果打开菜单没出现这行提示，说明脚本没找到菜单项；确认生效后把 true 改成 false，提示就不再出现。
+  const DEBUG_TOAST = true;
 
   // 抽屉菜单项的文字（中文界面 + 英文界面都列上，命中哪个算哪个）
   const MENU_LABELS = [
@@ -35,53 +40,83 @@
     'Creator Studio', 'Ads', 'Settings', 'Help Center', 'Log out'
   ];
 
-  // 把元素的某个尺寸按比例缩小（读当前实际渲染值再算，取不到就不动）
-  function scalePx(el, prop, ratio) {
+  // 把元素的某个尺寸按比例缩小（读当前实际渲染值再算，!important 压过 X 的样式）
+  function scalePxImportant(el, prop, ratio) {
     const v = parseFloat(getComputedStyle(el)[prop]);
-    if (v > 0) el.style[prop] = (v * ratio) + 'px';
+    if (v > 0) el.style.setProperty(prop, (v * ratio) + 'px', 'important');
   }
 
-  // 在一个元素里找菜单文字：先看它自身的纯文本，再看它里面哪个 span 正好是菜单名
-  function findMenuLabel(el) {
-    const t = (el.textContent || '').trim();
-    if (MENU_LABELS.indexOf(t) !== -1) return { label: t, textEl: null };
-    let hit = null;
-    el.querySelectorAll('span').forEach(function (s) {
-      const st = s.textContent.trim();
-      if (!hit && MENU_LABELS.indexOf(st) !== -1) hit = s;
-    });
-    return hit ? { label: hit.textContent.trim(), textEl: hit } : null;
+  function shrinkItem(item, textEl) {
+    if (item.dataset.menuShrunk) return false; // 已处理过的不重复缩小
+    scalePxImportant(textEl, 'fontSize', FONT_RATIO);
+    scalePxImportant(item, 'fontSize', FONT_RATIO);
+    scalePxImportant(item, 'paddingTop', SPACE_RATIO);
+    scalePxImportant(item, 'paddingBottom', SPACE_RATIO);
+    scalePxImportant(item, 'marginTop', SPACE_RATIO);
+    scalePxImportant(item, 'marginBottom', SPACE_RATIO);
+    const row = item.firstElementChild;
+    if (row) {
+      scalePxImportant(row, 'paddingTop', SPACE_RATIO);
+      scalePxImportant(row, 'paddingBottom', SPACE_RATIO);
+    }
+    scalePxImportant(item, 'lineHeight', SPACE_RATIO);
+    item.dataset.menuShrunk = '1';
+    return true;
   }
 
-  function shrinkMenuItems(root) {
-    // v1.1 只认 a[role="link"]，X 有些菜单项可能不是这种写法，1.2 起所有链接和可点击项都按文字匹配
-    const els = (root || document).querySelectorAll('a[href], [role="link"], [role="button"]');
-    els.forEach(function (el) {
-      if (el.dataset.menuShrunk) return; // 已处理过的不重复缩小
-      const found = findMenuLabel(el);
-      if (!found) return;
-      // 字号：文字所在的最内层 span 为准，找不到就用整项
-      scalePx(found.textEl || el, 'fontSize', FONT_RATIO);
-      // 上下间距：整项和里面那层行的 padding 各减半
-      scalePx(el, 'paddingTop', SPACE_RATIO);
-      scalePx(el, 'paddingBottom', SPACE_RATIO);
-      const row = el.firstElementChild;
-      if (row) {
-        scalePx(row, 'paddingTop', SPACE_RATIO);
-        scalePx(row, 'paddingBottom', SPACE_RATIO);
-      }
-      scalePx(el, 'lineHeight', SPACE_RATIO);
-      el.dataset.menuShrunk = '1';
-    });
+  // 扫一遍页面所有文字节点，找菜单名
+  function scan() {
+    if (!document.body) return 0;
+    let count = 0;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const t = (node.nodeValue || '').trim();
+      if (!t || MENU_LABELS.indexOf(t) === -1) continue;
+      const textEl = node.parentElement;
+      if (!textEl) continue;
+      // 找到文字所在的那一整行（链接 / 按钮 / 行容器），找不到就用文字元素的父级
+      const item = textEl.closest('a, [role="link"], [role="button"]') || textEl.parentElement || textEl;
+      if (shrinkItem(item, textEl)) count++;
+    }
+    return count;
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    if (!DEBUG_TOAST) return;
+    let div = document.getElementById('x-menu-shrink-toast');
+    if (!div) {
+      div = document.createElement('div');
+      div.id = 'x-menu-shrink-toast';
+      div.style.cssText = 'position:fixed;left:50%;bottom:80px;transform:translateX(-50%);z-index:999999;background:rgba(0,0,0,0.8);color:#fff;font-size:14px;padding:8px 14px;border-radius:20px;pointer-events:none;';
+      document.body.appendChild(div);
+    }
+    div.textContent = msg;
+    div.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { div.style.display = 'none'; }, 3000);
+  }
+
+  let scheduled = false;
+  function scheduleScan() {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(function () {
+      scheduled = false;
+      const n = scan();
+      if (n > 0) toast('已缩小 ' + n + ' 个菜单项');
+    }, 300);
   }
 
   function start() {
-    shrinkMenuItems(document);
+    scheduleScan();
     // X 是单页应用，抽屉菜单每次打开都会重新渲染，持续监听新出现的菜单项
-    new MutationObserver(function () { shrinkMenuItems(document); })
-      .observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(function (mutations) {
+      if (mutations.some(function (m) { return m.addedNodes.length > 0; })) scheduleScan();
+    }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  if (document.documentElement) start();
+  if (document.body) start();
   else document.addEventListener('DOMContentLoaded', start);
 })();
