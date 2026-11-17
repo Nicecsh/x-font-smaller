@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X.com 字体改小
 // @namespace    sunny-x-font-smaller
-// @version      1.1
+// @version      1.2
 // @description  把 X（x.com）网页版整体缩小显示；左侧抽屉菜单项的字号和间距各缩小一半
 // @author       csh
 // @date         2026-11-17
@@ -41,28 +41,37 @@
     if (v > 0) el.style[prop] = (v * ratio) + 'px';
   }
 
+  // 在一个元素里找菜单文字：先看它自身的纯文本，再看它里面哪个 span 正好是菜单名
+  function findMenuLabel(el) {
+    const t = (el.textContent || '').trim();
+    if (MENU_LABELS.indexOf(t) !== -1) return { label: t, textEl: null };
+    let hit = null;
+    el.querySelectorAll('span').forEach(function (s) {
+      const st = s.textContent.trim();
+      if (!hit && MENU_LABELS.indexOf(st) !== -1) hit = s;
+    });
+    return hit ? { label: hit.textContent.trim(), textEl: hit } : null;
+  }
+
   function shrinkMenuItems(root) {
-    const links = (root || document).querySelectorAll('a[role="link"]');
-    links.forEach(function (a) {
-      if (a.dataset.menuShrunk) return; // 已处理过的不重复缩小
-      const label = (a.textContent || '').trim();
-      if (MENU_LABELS.indexOf(label) === -1) return;
-      // 文字所在的最内层 span（字号以它为准）
-      let textEl = null;
-      a.querySelectorAll('span').forEach(function (s) {
-        if (s.textContent.trim() === label) textEl = s;
-      });
-      scalePx(textEl || a, 'fontSize', FONT_RATIO);
-      // 上下间距：链接本身和里面那层行的 padding 各减半
-      scalePx(a, 'paddingTop', SPACE_RATIO);
-      scalePx(a, 'paddingBottom', SPACE_RATIO);
-      const row = a.firstElementChild;
+    // v1.1 只认 a[role="link"]，X 有些菜单项可能不是这种写法，1.2 起所有链接和可点击项都按文字匹配
+    const els = (root || document).querySelectorAll('a[href], [role="link"], [role="button"]');
+    els.forEach(function (el) {
+      if (el.dataset.menuShrunk) return; // 已处理过的不重复缩小
+      const found = findMenuLabel(el);
+      if (!found) return;
+      // 字号：文字所在的最内层 span 为准，找不到就用整项
+      scalePx(found.textEl || el, 'fontSize', FONT_RATIO);
+      // 上下间距：整项和里面那层行的 padding 各减半
+      scalePx(el, 'paddingTop', SPACE_RATIO);
+      scalePx(el, 'paddingBottom', SPACE_RATIO);
+      const row = el.firstElementChild;
       if (row) {
         scalePx(row, 'paddingTop', SPACE_RATIO);
         scalePx(row, 'paddingBottom', SPACE_RATIO);
       }
-      scalePx(a, 'lineHeight', SPACE_RATIO);
-      a.dataset.menuShrunk = '1';
+      scalePx(el, 'lineHeight', SPACE_RATIO);
+      el.dataset.menuShrunk = '1';
     });
   }
 
