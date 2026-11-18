@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         X.com 字体改小
 // @namespace    sunny-x-font-smaller
-// @version      1.5
-// @description  把 X（x.com）网页版整体缩小显示，并将移动版头像菜单的字号设为 11px、行高减半
+// @version      1.0
+// @description  把 X（x.com）网页版整体缩小显示，并将移动版头像菜单的字号设为 14.5px、行高减半
 // @author       csh
 // @date         2026-11-18
 // @match        https://x.com/*
